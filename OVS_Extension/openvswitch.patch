@@ -1,0 +1,508 @@
+diff -Naur openvswitch-2.8.0/include/openvswitch/ofp-errors.h openvswitch-2.8.1/include/openvswitch/ofp-errors.h
+--- openvswitch-2.8.0/include/openvswitch/ofp-errors.h	2018-02-13 14:23:35.561118074 +0100
++++ openvswitch-2.8.1/include/openvswitch/ofp-errors.h	2018-02-13 14:44:37.684282888 +0100
+@@ -511,6 +511,12 @@
+     /* OF1.2+(8,2).  Permissions error. */
+     OFPERR_OFPTMFC_EPERM,
+ 
++    /* OF1.2+(8,3).  Switch reservation failed. */
++    OFPERR_SW_RESERVATION_FAILED,
++
++	/* OF1.2+(8,4).  Switch reservation attempt. */
++	OFPERR_SW_RESERVATION_ATTEMPT,
++
+ /* ## --------------------- ## */
+ /* ## OFPET_QUEUE_OP_FAILED ## */
+ /* ## --------------------- ## */
+diff -Naur openvswitch-2.8.0/ofproto/bundles.h openvswitch-2.8.1/ofproto/bundles.h
+--- openvswitch-2.8.0/ofproto/bundles.h	2018-02-13 14:23:26.716955930 +0100
++++ openvswitch-2.8.1/ofproto/bundles.h	2018-02-13 14:44:29.336128329 +0100
+@@ -33,6 +33,7 @@
+ 
+ struct ofp_bundle_entry {
+     struct ovs_list   node;
++    bool lockFlag;
+     enum ofptype      type;  /* OFPTYPE_FLOW_MOD, OFPTYPE_PORT_MOD,
+                               * OFPTYPE_GROUP_MOD, OFPTYPE_PACKET_OUT. */
+     union {
+diff -Naur openvswitch-2.8.0/ofproto/ofproto.c openvswitch-2.8.1/ofproto/ofproto.c
+--- openvswitch-2.8.0/ofproto/ofproto.c	2018-02-13 14:23:26.248947350 +0100
++++ openvswitch-2.8.1/ofproto/ofproto.c	2018-02-13 14:44:28.892120108 +0100
+@@ -57,6 +57,8 @@
+ #include "simap.h"
+ #include "smap.h"
+ #include "sset.h"
++#include "time.h"
++#include "sys/time.h"
+ #include "timeval.h"
+ #include "tun-metadata.h"
+ #include "unaligned.h"
+@@ -141,6 +143,9 @@
+                                        const struct rule_criteria *,
+                                        struct rule_collection *);
+ 
++static void transaction_commit(struct ofconn *ofconn, uint32_t id);
++static void transaction_rollback(struct ofconn *ofconn, uint32_t id);
++
+ struct learned_cookie {
+     union {
+         /* In struct ofproto's 'learned_cookies' hmap. */
+@@ -4778,6 +4783,7 @@
+ add_flow_start(struct ofproto *ofproto, struct ofproto_flow_mod *ofm)
+     OVS_REQUIRES(ofproto_mutex)
+ {
++	// VLOG_INFO("ACID | (add_flow_start) FLOW_MOD with command ADD detected inside the bundle in sw %s", ofproto->name);
+     struct rule *old_rule = NULL;
+     struct rule *new_rule = ofm->temp_rule;
+     const struct rule_actions *actions = rule_get_actions(new_rule);
+@@ -5499,6 +5505,18 @@
+     struct rule_collection *old_rules = &ofm->old_rules;
+     enum ofperr error;
+ 
++    struct rule *locking_rule = ofm->temp_rule;
++
++    // The switch must check if the bundle contains a locking command (The bundle is then recognizes as VoteLock).
++	// In our implementation locking command is a FLOW_MOD message with command MODIFY_STRICT and table ID 195 (i.e., HEX 0xc3)
++	// If this is the case, such locking command must not be processed as a normal FLOW_MOD message (hence return in the if loop below).
++	// Instead this block must return the indication that the bundle is used as a VoteLock
++
++	if (locking_rule->table_id == 0xc3) {
++		error = OFPERR_SW_RESERVATION_ATTEMPT;
++		return error;
++	}
++
+     error = collect_rules_strict(ofproto, &ofm->criteria, old_rules);
+ 
+     if (!error) {
+@@ -5785,7 +5803,7 @@
+     reduce_timeout(hard_timeout, &rule->hard_timeout);
+     ovs_mutex_unlock(&rule->mutex);
+ }
+-
++
+ static enum ofperr
+ handle_flow_mod(struct ofconn *ofconn, const struct ofp_header *oh)
+     OVS_EXCLUDED(ofproto_mutex)
+@@ -5801,12 +5819,82 @@
+         return error;
+     }
+ 
++    ovs_be32 tokenByte = oh->xid;
++	int token = ((tokenByte & 0x000000FF) << 24) | ((tokenByte & 0x0000FF00) <<  8) | ((tokenByte & 0x00FF0000) >>  8) | ((tokenByte & 0xFF000000) >> 24);
++
+     ofpbuf_use_stub(&ofpacts, ofpacts_stub, sizeof ofpacts_stub);
+     error = ofputil_decode_flow_mod(&fm, oh, ofconn_get_protocol(ofconn),
+                                     ofproto_get_tun_tab(ofproto),
+                                     &ofproto->vl_mff_map, &ofpacts,
+                                     u16_to_ofp(ofproto->max_ports),
+                                     ofproto->n_tables);
++
++    if (ofproto->reservationFlag > 0) {
++    	if (ofproto->reservationFlag == (uint32_t) token) {
++    		// This command originates from the ATM that owns the lock over the switch. The command is authorised.
++
++    		// VLOG_INFO("ACID | (handle_flow_mod) ----> Authorized command, sw: %s", ofproto->name);
++
++    		switch (fm.command) {
++    			case OFPFC_DELETE:
++    				if (fm.table_id == 0xc3) {
++    					VLOG_INFO("ACID | (handle_flow_mod) Commit ----> %s, update ID: %d", ofproto->name, token);
++    					transaction_commit(ofconn, (uint32_t) token);
++    				}
++    				break;
++    			case OFPFC_DELETE_STRICT:
++    				if (fm.table_id == 0xc3) {
++    					VLOG_INFO("ACID | (handle_flow_mod) Rollback ----> %s, update ID: %d", ofproto->name, token);
++    					transaction_rollback(ofconn, (uint32_t) token);
++    				}
++    				break;
++    			default:
++    				break;
++    		}
++    	} else {
++    		switch (fm.command) {
++    			case OFPFC_DELETE:
++    				if (fm.table_id == 0xc3) {
++    					VLOG_INFO("ACID | (handle_flow_mod) REJECTED Commit, unauthorized TM ----> %s, update ID: %d, current reservation token: %u", ofproto->name, token, ofproto->reservationFlag);
++    					return 0;
++    				}
++    				break;
++    			case OFPFC_DELETE_STRICT:
++    				if (fm.table_id == 0xc3) {
++    					VLOG_INFO("ACID | (handle_flow_mod) REJECTED Rollback, unauthorized TM ----> %s, update ID: %d, current reservation token: %u", ofproto->name, token, ofproto->reservationFlag);
++    					return 0;
++    				}
++    				break;
++    			default:
++    				break;
++    		}
++    		// This command originates from an ATM that does not own the lock over the switch and must be discarded
++    		// In this implementation, we return 0. Instead, it would be useful to return a new OF message that indicates
++    		// that the switch is reserved and cannot process the message (e.g., OFPERR_UNAUTHORIZED_MESSAGE)
++
++    		// VLOG_INFO("ACID | (handle_flow_mod) ----> Command rejected, sw: %s, current reservation token: %d, received token: %d", ofproto->name, ofproto->reservationFlag, token);
++    		// return OFPERR_UNAUTHORIZED_MESSAGE; // A new OF command
++    		return 0;
++    	}
++	} else {
++		switch (fm.command) {
++			case OFPFC_DELETE:
++				if (fm.table_id == 0xc3) {
++					VLOG_INFO("ACID | (handle_flow_mod) IGNORE Commit (switch not reserved) ----> %s, update ID: %d", ofproto->name, token);
++					return 0;
++				}
++				break;
++			case OFPFC_DELETE_STRICT:
++				if (fm.table_id == 0xc3) {
++					VLOG_INFO("ACID | (handle_flow_mod) IGNORE Rollback (switch not reserved) ----> %s, update ID: %d", ofproto->name, token);
++					return 0;
++				}
++				break;
++			default:
++				break;
++		}
++	}
++
+     if (!error) {
+         struct openflow_mod_requester req = { ofconn, oh };
+         error = handle_flow_mod__(ofproto, &fm, &req);
+@@ -7612,6 +7700,10 @@
+     /* Release resources not needed after start. */
+     ofproto_flow_mod_uninit(ofm);
+ 
++    if (error == OFPERR_SW_RESERVATION_ATTEMPT) {
++    	return error;
++    }
++
+     if (error) {
+         rule_collection_destroy(&ofm->old_rules);
+         rule_collection_destroy(&ofm->new_rules);
+@@ -7678,6 +7770,12 @@
+     }
+ }
+ 
++long getMicrotime(){
++	struct timeval currentTime;
++	gettimeofday(&currentTime, NULL);
++	return currentTime.tv_sec * (int)1e6 + currentTime.tv_usec;
++}
++
+ /* Commit phases (all while locking ofproto_mutex):
+  *
+  * 1. Begin: Gather resources and make changes visible in the next version.
+@@ -7704,6 +7802,9 @@
+     struct ofp_bundle_entry *be;
+     enum ofperr error;
+ 
++    // The flag that is true when the bundle is used as VoteLock primitive
++    bool voteLock = false;
++
+     bundle = ofconn_get_bundle(ofconn, id);
+ 
+     if (!bundle) {
+@@ -7719,6 +7820,8 @@
+ 
+         /* 1. Begin. */
+         LIST_FOR_EACH (be, node, &bundle->msg_list) {
++        	be->lockFlag = false;
++
+             if (be->type == OFPTYPE_PORT_MOD) {
+                 /* Our port mods are not atomic. */
+                 if (flags & OFPBF_ATOMIC) {
+@@ -7740,6 +7843,32 @@
+                      * effect. */
+                     be->ofm.version = version;
+                     error = ofproto_flow_mod_start(ofproto, &be->ofm);
++
++                    // If the bundle contains a lock primitive, it must try to lock the switch
++
++                    if (error == OFPERR_SW_RESERVATION_ATTEMPT) {
++                    	voteLock = true;
++                    	be->lockFlag = true;
++                    	error = 0;
++
++                    	if (ofproto->reservationFlag > 0) {
++                    		// Switch already reserved, the reservation data cannot be overwritten. This results with error OF message.
++                    		VLOG_INFO("ACID | (do_bundle_commit) VoteLock failed, switch %s, update ID: %u ---> switch already locked by update ID: %u", ofproto->name, id, ofproto->reservationFlag);
++                    		// This should be new OF message, e.g. error = OFPERR_SW_RESERVATION_FAILED;
++                    		// Instead we use OFPERR_OFPTMFC_EPERM
++                    		error = OFPERR_OFPTMFC_EPERM;
++                    	} else {
++                    		// Switch not reserved, reserve the switch. ATM ID is indicated as token in OF message header
++
++                    		VLOG_INFO("ACID | (do_bundle_commit) VoteLock succeed, switch %s, update ID: %u", ofproto->name, id);
++                    		ofproto->reservationFlag = id;
++                    		ofproto->reservationStart = getMicrotime();
++                    		error = 0;
++                    	}
++                    }
++
++                    // end of a block
++
+                 } else if (be->type == OFPTYPE_GROUP_MOD) {
+                     /* Store the version in which the changes should take
+                      * effect. */
+@@ -7758,62 +7887,72 @@
+         }
+ 
+         if (error) {
+-            /* Send error referring to the original message. */
++        	if (voteLock && error != OFPERR_OFPTMFC_EPERM) {
++        		ofproto->reservationFlag = 0;
++        		ofproto->reservationStart = 0;
++        	}
++
++        	/* Send error referring to the original message. */
+             if (error) {
+                 ofconn_send_error(ofconn, &be->ofp_msg, error);
+                 error = OFPERR_OFPBFC_MSG_FAILED;
+             }
+ 
+-            /* 2. Revert.  Undo all the changes made above. */
+-            LIST_FOR_EACH_REVERSE_CONTINUE(be, node, &bundle->msg_list) {
+-                if (be->type == OFPTYPE_FLOW_MOD) {
+-                    ofproto_flow_mod_revert(ofproto, &be->ofm);
+-                } else if (be->type == OFPTYPE_GROUP_MOD) {
+-                    ofproto_group_mod_revert(ofproto, &be->ogm);
+-                } else if (be->type == OFPTYPE_PACKET_OUT) {
+-                    ofproto_packet_out_revert(ofproto, &be->opo);
+-                }
+-                /* Nothing needs to be reverted for a port mod. */
++            if (!voteLock) {
++            	 /* 2. Revert.  Undo all the changes made above. */
++            	LIST_FOR_EACH_REVERSE_CONTINUE(be, node, &bundle->msg_list) {
++            		if (be->type == OFPTYPE_FLOW_MOD) {
++            			ofproto_flow_mod_revert(ofproto, &be->ofm);
++            		} else if (be->type == OFPTYPE_GROUP_MOD) {
++            			ofproto_group_mod_revert(ofproto, &be->ogm);
++            		} else if (be->type == OFPTYPE_PACKET_OUT) {
++            			ofproto_packet_out_revert(ofproto, &be->opo);
++            		}
++            		/* Nothing needs to be reverted for a port mod. */
++            	}
+             }
+-        } else {
+-            /* 4. Finish. */
+-            LIST_FOR_EACH (be, node, &bundle->msg_list) {
+-                if (be->type == OFPTYPE_PORT_MOD) {
+-                    /* Perform the actual port mod. This is not atomic, i.e.,
+-                     * the effects will be immediately seen by upcall
+-                     * processing regardless of the lookup version.  It should
+-                     * be noted that port configuration changes can originate
+-                     * also from OVSDB changes asynchronously to all upcall
+-                     * processing. */
+-                    port_mod_finish(ofconn, &be->opm.pm, be->opm.port);
+-                } else {
+-                    version =
+-                        (be->type == OFPTYPE_FLOW_MOD) ? be->ofm.version :
+-                        (be->type == OFPTYPE_GROUP_MOD) ? be->ogm.version :
+-                        (be->type == OFPTYPE_PACKET_OUT) ? be->opo.version :
+-                        version;
+-
+-                    /* Bump the lookup version to the one of the current
+-                     * message.  This makes all the changes in the bundle at
+-                     * this version visible to lookups at once. */
+-                    if (ofproto->tables_version < version) {
+-                        ofproto->tables_version = version;
+-                        ofproto->ofproto_class->set_tables_version(
+-                            ofproto, ofproto->tables_version);
+-                    }
+-
+-                    struct openflow_mod_requester req = { ofconn,
+-                                                          &be->ofp_msg };
+ 
+-                    if (be->type == OFPTYPE_FLOW_MOD) {
+-                        ofproto_flow_mod_finish(ofproto, &be->ofm, &req);
+-                    } else if (be->type == OFPTYPE_GROUP_MOD) {
+-                        ofproto_group_mod_finish(ofproto, &be->ogm, &req);
+-                    } else if (be->type == OFPTYPE_PACKET_OUT) {
+-                        ofproto_packet_out_finish(ofproto, &be->opo);
+-                    }
+-                }
+-            }
++        } else {
++        	if (!voteLock) {
++        		/* 4. Finish. */
++        		LIST_FOR_EACH (be, node, &bundle->msg_list) {
++        			if (be->type == OFPTYPE_PORT_MOD) {
++        				/* Perform the actual port mod. This is not atomic, i.e.,
++        				 * the effects will be immediately seen by upcall
++        				 * processing regardless of the lookup version.  It should
++        				 * be noted that port configuration changes can originate
++        				 * also from OVSDB changes asynchronously to all upcall
++        				 * processing. */
++        				port_mod_finish(ofconn, &be->opm.pm, be->opm.port);
++        			} else {
++        				version =
++        						(be->type == OFPTYPE_FLOW_MOD) ? be->ofm.version :
++        						(be->type == OFPTYPE_GROUP_MOD) ? be->ogm.version :
++        						(be->type == OFPTYPE_PACKET_OUT) ? be->opo.version :
++        						version;
++
++        				/* Bump the lookup version to the one of the current
++        				 * message.  This makes all the changes in the bundle at
++        				 * this version visible to lookups at once. */
++        				if (ofproto->tables_version < version) {
++        					ofproto->tables_version = version;
++        					ofproto->ofproto_class->set_tables_version(
++        							ofproto, ofproto->tables_version);
++        				}
++
++        				struct openflow_mod_requester req = { ofconn,
++        						&be->ofp_msg };
++
++        				if (be->type == OFPTYPE_FLOW_MOD) {
++        					ofproto_flow_mod_finish(ofproto, &be->ofm, &req);
++        				} else if (be->type == OFPTYPE_GROUP_MOD) {
++        					ofproto_group_mod_finish(ofproto, &be->ogm, &req);
++        				} else if (be->type == OFPTYPE_PACKET_OUT) {
++        					ofproto_packet_out_finish(ofproto, &be->opo);
++        				}
++        			}
++        		}
++        	}
+         }
+ 
+         ofmonitor_flush(ofproto->connmgr);
+@@ -7821,10 +7960,127 @@
+     }
+ 
+     /* The bundle is discarded regardless the outcome. */
+-    ofp_bundle_remove__(ofconn, bundle);
++
++    // The bundle is not removed if it has been recognized as a voteLock
++    // It will be removed only after commit from ATM
++    if (!voteLock || (voteLock && error)) {
++    	VLOG_INFO("ACID | (do_bundle_commit) remove bundle ----> %s, update ID: %u", ofproto->name, id);
++    	ofp_bundle_remove__(ofconn, bundle);
++    }
+     return error;
+ }
+ 
++static void
++transaction_commit(struct ofconn *ofconn, uint32_t id)
++{
++    struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
++    ovs_version_t version;
++    struct ofp_bundle *bundle;
++    struct ofp_bundle_entry *be;
++
++    bundle = ofconn_get_bundle(ofconn, id);
++
++    if (!bundle) {
++    	VLOG_INFO("ACID | (transaction_commit) Bundle Commit (last phase) ----> %s, update ID: %u does not exist", ofproto->name, id);
++    	return OFPERR_OFPBFC_BAD_ID;
++	}
++
++    VLOG_INFO("ACID | (transaction_commit) Bundle Commit (last phase) ----> %s, update ID: %u", ofproto->name, id);
++
++	ovs_mutex_lock(&ofproto_mutex);
++
++    LIST_FOR_EACH (be, node, &bundle->msg_list) {
++    	if (!be->lockFlag) {
++    		if (be->type == OFPTYPE_PORT_MOD) {
++    			/* Perform the actual port mod. This is not atomic, i.e.,
++    			 * the effects will be immediately seen by upcall
++    			 * processing regardless of the lookup version.  It should
++    			 * be noted that port configuration changes can originate
++    			 * also from OVSDB changes asynchronously to all upcall
++    			 * processing. */
++    			port_mod_finish(ofconn, &be->opm.pm, be->opm.port);
++    		} else {
++    			version =
++    				(be->type == OFPTYPE_FLOW_MOD) ? be->ofm.version :
++    				(be->type == OFPTYPE_GROUP_MOD) ? be->ogm.version :
++    				(be->type == OFPTYPE_PACKET_OUT) ? be->opo.version :
++    				version;
++
++    			/* Bump the lookup version to the one of the current
++    			 * message.  This makes all the changes in the bundle at
++    			 * this version visible to lookups at once. */
++    			if (ofproto->tables_version < version) {
++    				ofproto->tables_version = version;
++    				ofproto->ofproto_class->set_tables_version(
++    						ofproto, ofproto->tables_version);
++    			}
++
++    			struct openflow_mod_requester req = { ofconn, &be->ofp_msg };
++
++    			if (be->type == OFPTYPE_FLOW_MOD) {
++    				ofproto_flow_mod_finish(ofproto, &be->ofm, &req);
++    			} else if (be->type == OFPTYPE_GROUP_MOD) {
++    				ofproto_group_mod_finish(ofproto, &be->ogm, &req);
++    			} else if (be->type == OFPTYPE_PACKET_OUT) {
++    				ofproto_packet_out_finish(ofproto, &be->opo);
++    			}
++    		}
++    	}
++    }
++
++    // At the end of Commit, the switch must unlock itself
++    VLOG_INFO("ACID | (transaction_commit) Reservation duration (single sw) ----> %s, update ID: %u,\t duration: %lu", ofproto->name, id, (getMicrotime()-ofproto->reservationStart));
++    VLOG_INFO("ACID | (transaction_commit) Reservation duration (path)----> %s, update ID: %u,\t start: %lu, end: %lu", ofproto->name, id, ofproto->reservationStart, getMicrotime());
++    ofproto->reservationFlag = 0;
++    ofproto->reservationStart = 0;
++
++    ofmonitor_flush(ofproto->connmgr);
++	ovs_mutex_unlock(&ofproto_mutex);
++
++	VLOG_INFO("ACID | (transaction_commit) Bundle Commit, remove bundle ----> %s, update ID: %u", ofproto->name, id);
++    ofp_bundle_remove__(ofconn, bundle);
++}
++
++static void
++transaction_rollback(struct ofconn *ofconn, uint32_t id)
++{
++    struct ofproto *ofproto = ofconn_get_ofproto(ofconn);
++    ovs_version_t version;
++    struct ofp_bundle *bundle;
++    struct ofp_bundle_entry *be;
++
++    bundle = ofconn_get_bundle(ofconn, id);
++
++    if (bundle) {
++    	VLOG_INFO("ACID | (transaction_rollback) Revert Commit (last phase) ----> %s, update ID: %u", ofproto->name, id);
++
++    	LIST_FOR_EACH(be, node, &bundle->msg_list) {
++    		if (!be->lockFlag) {
++    			if (be->type == OFPTYPE_FLOW_MOD) {
++    				VLOG_INFO("ACID | (transaction_rollback) Revert in %s - FLOW MOD", ofproto->name);
++    				ofproto_flow_mod_revert(ofproto, &be->ofm);
++    			} else if (be->type == OFPTYPE_GROUP_MOD) {
++    				ofproto_group_mod_revert(ofproto, &be->ogm);
++    			} else if (be->type == OFPTYPE_PACKET_OUT) {
++    				ofproto_packet_out_revert(ofproto, &be->opo);
++    			}
++    		}
++    	}
++
++    	// At the end of Rollback, the switch must unlock itself
++    	VLOG_INFO("ACID | (transaction_rollback) Reservation duration (single sw) ----> %s, update ID: %u,\t duration: %lu", ofproto->name, id, (getMicrotime()-ofproto->reservationStart));
++    	ofproto->reservationFlag = 0;
++    	ofproto->reservationStart = 0;
++
++    	ofmonitor_flush(ofproto->connmgr);
++
++    	VLOG_INFO("ACID | (transaction_rollback) Revert Commit, remove bundle ----> %s, update ID: %u", ofproto->name, id);
++    	ofp_bundle_remove__(ofconn, bundle);
++    } else {
++    	VLOG_INFO("ACID | (transaction_rollback) Revert Commit (last phase) ----> %s, update ID: %u does not exist", ofproto->name, id);
++    }
++}
++
+ static enum ofperr
+ handle_bundle_control(struct ofconn *ofconn, const struct ofp_header *oh)
+ {
+diff -Naur openvswitch-2.8.0/ofproto/ofproto-provider.h openvswitch-2.8.1/ofproto/ofproto-provider.h
+--- openvswitch-2.8.0/ofproto/ofproto-provider.h	2018-02-13 14:23:26.284948010 +0100
++++ openvswitch-2.8.1/ofproto/ofproto-provider.h	2018-02-13 14:44:28.928120775 +0100
+@@ -74,6 +74,9 @@
+     char *type;                 /* Datapath type. */
+     char *name;                 /* Datapath name. */
+ 
++    uint32_t reservationFlag;
++    long reservationStart;
++
+     /* Settings. */
+     uint64_t fallback_dpid;     /* Datapath ID if no better choice found. */
+     uint64_t datapath_id;       /* Datapath ID. */

@@ -1,0 +1,251 @@
+--- FlowModUtils.java	2018-02-20 16:14:41.527477412 +0100
++++ FlowModUtils_orig.java	2018-02-20 16:14:32.183655126 +0100
+@@ -59,21 +59,38 @@
+ 					.setXid(fm.getXid())
+ 					.build();
+ 		} else {
+-			return b.setActions(fm.getActions())
+-					.setBufferId(fm.getBufferId())
+-					.setCookie(fm.getCookie())
+-					.setCookieMask(fm.getCookieMask()) // added in OF1.1
+-					.setFlags(fm.getFlags())
+-					.setHardTimeout(fm.getHardTimeout())
+-					.setIdleTimeout(fm.getIdleTimeout())
+-					.setInstructions(fm.getInstructions()) // added in OF1.1
+-					.setMatch(fm.getMatch())
+-					.setOutGroup(fm.getOutGroup()) // added in OF1.1
+-					.setOutPort(fm.getOutPort())
+-					.setPriority(fm.getPriority())
+-					.setTableId(fm.getTableId())
+-					.setXid(fm.getXid())
+-					.build();
++			if (b.getVersion().compareTo(OFVersion.OF_14) == 0) {
++				return b.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask())
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.4 instead of action
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup())
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();				
++			} else {
++				return b.setActions(fm.getActions())
++						.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask()) // added in OF1.1
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.1
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup()) // added in OF1.1
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			}
+ 		}
+ 	}
+ 
+@@ -97,7 +114,23 @@
+ 					.setXid(fm.getXid())
+ 					.build();
+ 		} else {
+-			return b.setActions(fm.getActions())
++			if (b.getVersion().compareTo(OFVersion.OF_14) == 0) {
++				return b.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask())
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.4 instead of action
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup())
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			} else {
++				return b.setActions(fm.getActions())
+ 					.setBufferId(fm.getBufferId())
+ 					.setCookie(fm.getCookie())
+ 					.setCookieMask(fm.getCookieMask()) // added in OF1.1
+@@ -112,6 +145,7 @@
+ 					.setTableId(fm.getTableId())
+ 					.setXid(fm.getXid())
+ 					.build();
++			}
+ 		}
+ 	}
+ 
+@@ -135,21 +169,38 @@
+ 					.setXid(fm.getXid())
+ 					.build();
+ 		} else {
+-			return b.setActions(fm.getActions())
+-					.setBufferId(fm.getBufferId())
+-					.setCookie(fm.getCookie())
+-					.setCookieMask(fm.getCookieMask()) // added in OF1.1
+-					.setFlags(fm.getFlags())
+-					.setHardTimeout(fm.getHardTimeout())
+-					.setIdleTimeout(fm.getIdleTimeout())
+-					.setInstructions(fm.getInstructions()) // added in OF1.1
+-					.setMatch(fm.getMatch())
+-					.setOutGroup(fm.getOutGroup()) // added in OF1.1
+-					.setOutPort(fm.getOutPort())
+-					.setPriority(fm.getPriority())
+-					.setTableId(fm.getTableId())
+-					.setXid(fm.getXid())
+-					.build();
++			if (b.getVersion().compareTo(OFVersion.OF_14) == 0) {
++				return b.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask())
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.4 instead of action
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup())
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			} else {
++				return b.setActions(fm.getActions())
++						.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask()) // added in OF1.1
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.1
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup()) // added in OF1.1
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			}
+ 		}
+ 	}
+ 
+@@ -173,21 +224,38 @@
+ 					.setXid(fm.getXid())
+ 					.build();
+ 		} else {
+-			return b.setActions(fm.getActions())
+-					.setBufferId(fm.getBufferId())
+-					.setCookie(fm.getCookie())
+-					.setCookieMask(fm.getCookieMask()) // added in OF1.1
+-					.setFlags(fm.getFlags())
+-					.setHardTimeout(fm.getHardTimeout())
+-					.setIdleTimeout(fm.getIdleTimeout())
+-					.setInstructions(fm.getInstructions()) // added in OF1.1
+-					.setMatch(fm.getMatch())
+-					.setOutGroup(fm.getOutGroup()) // added in OF1.1
+-					.setOutPort(fm.getOutPort())
+-					.setPriority(fm.getPriority())
+-					.setTableId(fm.getTableId())
+-					.setXid(fm.getXid())
+-					.build();
++			if (b.getVersion().compareTo(OFVersion.OF_14) == 0) {
++				return b.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask())
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.4 instead of action
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup())
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			} else {
++				return b.setActions(fm.getActions())
++						.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask()) // added in OF1.1
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.1
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup()) // added in OF1.1
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			}
+ 		}
+ 	}
+ 
+@@ -211,21 +279,38 @@
+ 					.setXid(fm.getXid())
+ 					.build();
+ 		} else {
+-			return b.setActions(fm.getActions())
+-					.setBufferId(fm.getBufferId())
+-					.setCookie(fm.getCookie())
+-					.setCookieMask(fm.getCookieMask()) // added in OF1.1
+-					.setFlags(fm.getFlags())
+-					.setHardTimeout(fm.getHardTimeout())
+-					.setIdleTimeout(fm.getIdleTimeout())
+-					.setInstructions(fm.getInstructions()) // added in OF1.1
+-					.setMatch(fm.getMatch())
+-					.setOutGroup(fm.getOutGroup()) // added in OF1.1
+-					.setOutPort(fm.getOutPort())
+-					.setPriority(fm.getPriority())
+-					.setTableId(fm.getTableId())
+-					.setXid(fm.getXid())
+-					.build();
++			if (b.getVersion().compareTo(OFVersion.OF_14) == 0) {
++				return b.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask())
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.4 instead of action
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup())
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			} else {
++				return b.setActions(fm.getActions())
++						.setBufferId(fm.getBufferId())
++						.setCookie(fm.getCookie())
++						.setCookieMask(fm.getCookieMask()) // added in OF1.1
++						.setFlags(fm.getFlags())
++						.setHardTimeout(fm.getHardTimeout())
++						.setIdleTimeout(fm.getIdleTimeout())
++						.setInstructions(fm.getInstructions()) // added in OF1.1
++						.setMatch(fm.getMatch())
++						.setOutGroup(fm.getOutGroup()) // added in OF1.1
++						.setOutPort(fm.getOutPort())
++						.setPriority(fm.getPriority())
++						.setTableId(fm.getTableId())
++						.setXid(fm.getXid())
++						.build();
++			}
+ 		}
+ 	}
+ 	

@@ -1,0 +1,59 @@
+--- OFSwitchHandshakeHandler_orig.java	2018-02-20 15:41:25.961289366 +0100
++++ OFSwitchHandshakeHandler.java	2018-02-20 15:41:02.473733918 +0100
+@@ -27,6 +27,7 @@
+ import org.projectfloodlight.openflow.protocol.OFBadRequestCode;
+ import org.projectfloodlight.openflow.protocol.OFBarrierReply;
+ import org.projectfloodlight.openflow.protocol.OFBarrierRequest;
++import org.projectfloodlight.openflow.protocol.OFBundleCtrlMsg;
+ import org.projectfloodlight.openflow.protocol.OFControllerRole;
+ import org.projectfloodlight.openflow.protocol.OFDescStatsReply;
+ import org.projectfloodlight.openflow.protocol.OFDescStatsRequest;
+@@ -564,6 +565,10 @@
+ 			// do nothing
+ 		}
+ 
++		void processOFBundleCtrl(OFBundleCtrlMsg m) {
++			unhandledMessageReceived(m);
++		}
++
+ 		void processOFError(OFErrorMsg m) {
+ 			logErrorDisconnect(m);
+ 		}
+@@ -582,7 +587,7 @@
+ 		void processOFPacketIn(OFPacketIn m) {
+ 			unhandledMessageReceived(m);
+ 		}
+-
++		
+ 		// By default add port status messages to a pending list
+ 		void processOFPortStatus(OFPortStatus m) {
+ 			pendingPortStatusMsg.add(m);
+@@ -863,6 +868,9 @@
+ 			case EXPERIMENTER:
+ 				processOFExperimenter((OFExperimenter) m);
+ 				break;
++			case BUNDLE_CONTROL:
++				processOFBundleCtrl((OFBundleCtrlMsg) m);
++				break;
+ 			default:
+ 				illegalMessageReceived(m);
+ 				break;
+@@ -1461,12 +1469,17 @@
+ 		void processOFFlowRemoved(OFFlowRemoved m) {
+ 			dispatchMessage(m);
+ 		}
+-
++		
+ 		@Override
+ 		void processOFStatsReply(OFStatsReply m) {
+ 			// TODO Auto-generated method stub
+ 			super.processOFStatsReply(m);
+ 		}
++		
++		@Override
++		void processOFBundleCtrl(OFBundleCtrlMsg m) {
++			dispatchMessage(m);
++		}
+ 	}
+ 
+ 	/**
